@@ -9,6 +9,10 @@ function App() {
   const [progressStep, setProgressStep] = useState(0);
   const [progressText, setProgressText] = useState('');
   const [progressAnimation, setProgressAnimation] = useState(false);
+  
+  // Check if we're in production or localhost
+  const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+  const API_BASE_URL = 'http://100.27.187.96:5001/api/strategy';
 
   // Add effect for animated progress bar
   useEffect(() => {
@@ -47,12 +51,14 @@ function App() {
       setProgressText('Processing natural language strategy...');
       
       // Step 1: Parse natural language to structured strategy
-      const parseResponse = await fetch('https://100.27.187.96:5001/api/strategy/parse', {
+      const parseResponse = await fetch(`${API_BASE_URL}/parse`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ description }),
+        mode: 'cors',
+        credentials: 'omit'
       });
       
       if (!parseResponse.ok) {
@@ -76,12 +82,14 @@ function App() {
       }, 1000);
       
       // Step 2: Submit structured strategy for backtesting
-      const backtestResponse = await fetch('https://100.27.187.96:5001/api/strategy/backtest', {
+      const backtestResponse = await fetch(`${API_BASE_URL}/backtest`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ strategy: parseData.strategy }),
+        mode: 'cors',
+        credentials: 'omit'
       });
       
       if (!backtestResponse.ok) {
