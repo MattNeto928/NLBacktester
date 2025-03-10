@@ -47,7 +47,7 @@ function App() {
       setProgressText('Processing natural language strategy...');
       
       // Step 1: Parse natural language to structured strategy
-      const parseResponse = await fetch('http://100.27.187.96:5001/api/strategy/parse', {
+      const parseResponse = await fetch('https://100.27.187.96:5001/api/strategy/parse', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -76,7 +76,7 @@ function App() {
       }, 1000);
       
       // Step 2: Submit structured strategy for backtesting
-      const backtestResponse = await fetch('http://100.27.187.96:5001/api/strategy/backtest', {
+      const backtestResponse = await fetch('https://100.27.187.96:5001/api/strategy/backtest', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

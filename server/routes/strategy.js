@@ -13,10 +13,19 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
  */
 router.post('/parse', async (req, res) => {
   try {
+    console.log('[API] Received request to /parse');
+    console.log('[API] Request body:', req.body);
+    
     const { description } = req.body;
     
     if (!description) {
+      console.log('[API] Error: Missing description in request');
       return res.status(400).json({ error: 'Strategy description is required' });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      console.log('[API] Error: GEMINI_API_KEY not set in environment variables');
+      return res.status(500).json({ error: 'API configuration error. Please check server logs.' });
     }
 
     // Define the prompt for Gemini with expanded condition types
