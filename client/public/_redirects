@@ -1,0 +1,2 @@
+/api/strategy/*  http://100.27.187.96:5001/api/strategy/:splat  200
+/*  /index.html  200
