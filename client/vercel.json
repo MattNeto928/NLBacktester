@@ -1,3 +1,8 @@
 {
-  "rewrites": []
+  "rewrites": [
+    {
+      "source": "/api/strategy/:path*",
+      "destination": "http://100.27.187.96:5001/api/strategy/:path*"
+    }
+  ]
 }

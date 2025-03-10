@@ -12,7 +12,10 @@ function App() {
   
   // Check if we're in production or localhost
   const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
-  const API_BASE_URL = 'http://100.27.187.96:5001/api/strategy';
+  // Use relative URL in production to avoid mixed content issues
+  const API_BASE_URL = isProduction 
+    ? '/api/strategy'
+    : 'http://100.27.187.96:5001/api/strategy';
 
   // Add effect for animated progress bar
   useEffect(() => {
