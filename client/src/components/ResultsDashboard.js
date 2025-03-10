@@ -1884,6 +1884,10 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
                     if (tx.conditionDetails) {
                       try {
                         const condition = JSON.parse(tx.conditionDetails);
+                        
+                        // Log the condition details for debugging
+                        console.log(`Transaction condition for ${tx.symbol} on ${tx.date}:`, condition);
+                        
                         if (condition.type === 'technical') {
                           // Technical indicator condition
                           const indicatorName = condition.indicator.toUpperCase();
@@ -1895,6 +1899,12 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
                           } else {
                             reasonText = `${indicatorName} ${operator} ${value}`;
                           }
+                          
+                          // Log indicator parameters if available
+                          if (condition.params) {
+                            console.log(`${indicatorName} params:`, condition.params);
+                          }
+                          
                         } else if (condition.type === 'consecutive') {
                           // Consecutive price movement
                           reasonText = `${condition.days} consecutive ${condition.direction} days`;
@@ -1903,9 +1913,21 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
                           const timeframe = condition.timeframe || 'daily';
                           const operator = condition.operator.replace(/_/g, ' ');
                           reasonText = `${timeframe} change ${operator} ${condition.value}%`;
+                          
+                          // Log actual values if available
+                          if (condition.actualValue !== undefined) {
+                            console.log(`Actual ${timeframe} change: ${condition.actualValue}%, Threshold: ${condition.value}%`);
+                          }
+                          
                         } else if (condition.metric === 'price') {
                           // Price condition
                           reasonText = `Price ${condition.operator.replace(/_/g, ' ')} $${condition.value}`;
+                          
+                          // Log actual price if available
+                          if (condition.actualValue !== undefined) {
+                            console.log(`Actual price: $${condition.actualValue}, Threshold: $${condition.value}`);
+                          }
+                          
                         } else if (condition.metric === 'volume') {
                           // Volume condition
                           reasonText = `Volume ${condition.operator.replace(/_/g, ' ')} ${condition.value}`;
@@ -2011,6 +2033,17 @@ const ResultsDashboard = ({ results }) => {
   console.log('Results received in dashboard:', results);
   console.log('Stock data available:', results?._stockData ? Object.keys(results._stockData) : 'None');
   console.log('Initial selected stock:', firstStockSymbol);
+  
+  // More detailed logging for advanced strategy debugging
+  console.log('Strategy details:', results?.strategy);
+  
+  // Log buy/sell conditions if available
+  if (results?.buyConditions) {
+    console.log('Buy conditions:', results.buyConditions);
+  }
+  if (results?.sellConditions) {
+    console.log('Sell conditions:', results.sellConditions);
+  }
   
   // Log transaction information for debugging
   if (results?.transactions) {
@@ -2128,6 +2161,33 @@ const ResultsDashboard = ({ results }) => {
           <p>Click on any stock symbol to view its price chart with buy/sell indicators</p>
         </div>
       </div>
+      
+      {/* Debug Panel - only visible in development environment */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="mb-4 p-4 bg-gray-100 rounded border border-gray-300">
+          <details>
+            <summary className="cursor-pointer font-medium text-gray-700 hover:text-gray-900">
+              Debug Information (Parsed Strategy)
+            </summary>
+            <div className="mt-2 p-2 bg-white rounded overflow-auto max-h-60">
+              <h4 className="text-sm font-medium">Buy Conditions:</h4>
+              <pre className="text-xs overflow-auto whitespace-pre-wrap">
+                {JSON.stringify(results.buyConditions, null, 2)}
+              </pre>
+              
+              <h4 className="text-sm font-medium mt-2">Sell Conditions:</h4>
+              <pre className="text-xs overflow-auto whitespace-pre-wrap">
+                {JSON.stringify(results.sellConditions, null, 2)}
+              </pre>
+              
+              <h4 className="text-sm font-medium mt-2">Full Strategy:</h4>
+              <pre className="text-xs overflow-auto whitespace-pre-wrap">
+                {JSON.stringify(results.strategy, null, 2)}
+              </pre>
+            </div>
+          </details>
+        </div>
+      )}
       
       {/* Metrics Summary */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-6">

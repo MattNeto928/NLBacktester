@@ -75,6 +75,10 @@ function App() {
       
       const parseData = await parseResponse.json();
       
+      // Debug: Log the parsed strategy JSON for debugging advanced queries
+      console.log('Parsed Strategy JSON:', parseData);
+      console.log('Strategy object:', parseData.strategy);
+      
       // Start of backtesting phase
       setProgressStep(40);
       setProgressText('Fetching historical data...');
@@ -105,6 +109,14 @@ function App() {
       setProgressText('Backtest complete! Processing results...');
       
       const backtestData = await backtestResponse.json();
+      
+      // Debug: Log the backtest response JSON for debugging advanced queries
+      console.log('Backtest Response JSON:', backtestData);
+      if (backtestData.results) {
+        console.log('Backtest transactions:', backtestData.results.transactions);
+        console.log('Backtest positions:', backtestData.results.positions);
+        console.log('Backtest metrics:', backtestData.results.metrics);
+      }
       
       // Final processing
       setProgressStep(95);
