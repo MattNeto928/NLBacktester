@@ -1,6 +1,6 @@
-# NLTradeTest
+# NLBacktest
 
-NLTradeTest is a web application that allows users to backtest trading strategies described in natural language against historical stock data. The application leverages Google Gemini's API for language parsing and React with Tailwind for the frontend.
+NLBacktest is a web application that allows users to backtest trading strategies described in natural language against historical stock data. The application leverages Google Gemini's API for language parsing and React with Tailwind for the frontend.
 
 ## Features
 

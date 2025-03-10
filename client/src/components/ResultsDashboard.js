@@ -80,6 +80,28 @@ const TechnicalIndicatorChart = ({
       return result;
     };
 
+    const calculateEMA = (data, period, valueKey = 'close') => {
+      const result = Array(data.length).fill(null);
+      
+      // Start with SMA for the first value
+      let sum = 0;
+      for (let i = 0; i < period && i < data.length; i++) {
+        sum += data[i][valueKey];
+      }
+      
+      if (period <= data.length) {
+        result[period - 1] = sum / period;
+        
+        // Calculate EMA for the rest
+        const multiplier = 2 / (period + 1);
+        for (let i = period; i < data.length; i++) {
+          result[i] = ((data[i][valueKey] - result[i - 1]) * multiplier) + result[i - 1];
+        }
+      }
+      
+      return result;
+    };
+
     const calculateRSI = (data, period = 14) => {
       const result = [];
       
@@ -137,29 +159,6 @@ const TechnicalIndicatorChart = ({
         console.warn("Not enough data for accurate MACD calculation");
       }
       
-      // Calculate EMA helper function
-      const calculateEMA = (data, period, valueKey = 'close') => {
-        const result = Array(data.length).fill(null);
-        
-        // Start with SMA for the first value
-        let sum = 0;
-        for (let i = 0; i < period && i < data.length; i++) {
-          sum += data[i][valueKey];
-        }
-        
-        if (period <= data.length) {
-          result[period - 1] = sum / period;
-          
-          // Calculate EMA for the rest
-          const multiplier = 2 / (period + 1);
-          for (let i = period; i < data.length; i++) {
-            result[i] = ((data[i][valueKey] - result[i - 1]) * multiplier) + result[i - 1];
-          }
-        }
-        
-        return result;
-      };
-      
       // Calculate fast and slow EMAs
       const fastEMA = calculateEMA(data, fastPeriod);
       const slowEMA = calculateEMA(data, slowPeriod);
@@ -205,8 +204,321 @@ const TechnicalIndicatorChart = ({
       
       return resultData;
     };
-
     
+    const calculateBollingerBands = (data, { period = 20, multiplier = 2 }) => {
+      const result = [];
+      
+      // Calculate SMA first as the middle band
+      const smaValues = calculateSMA(data, period);
+      
+      // For each point, calculate the upper and lower bands
+      for (let i = 0; i < data.length; i++) {
+        const item = { ...data[i] };
+        const sma = smaValues[i]?.indicator;
+        
+        if (sma !== null && sma !== undefined && i >= period - 1) {
+          // Calculate standard deviation for this period
+          let sumSquaredDiff = 0;
+          for (let j = 0; j < period; j++) {
+            sumSquaredDiff += Math.pow(data[i - j].close - sma, 2);
+          }
+          const stdDev = Math.sqrt(sumSquaredDiff / period);
+          
+          // Calculate Bollinger Bands
+          item.middle = sma;
+          item.upper = sma + (multiplier * stdDev);
+          item.lower = sma - (multiplier * stdDev);
+          
+          // Calculate width as percentage of middle band
+          item.indicator = ((item.upper - item.lower) / item.middle) * 100;
+        } else {
+          item.middle = null;
+          item.upper = null;
+          item.lower = null;
+          item.indicator = null;
+        }
+        
+        result.push(item);
+      }
+      
+      return result;
+    };
+    
+    const calculateOBV = (data) => {
+      const result = [];
+      let obvValue = 0; // Start OBV at 0
+      
+      // First point has no previous to compare with
+      result.push({ ...data[0], indicator: obvValue });
+      
+      // Calculate OBV for remaining points
+      for (let i = 1; i < data.length; i++) {
+        const currentClose = data[i].close;
+        const previousClose = data[i - 1].close;
+        const currentVolume = data[i].volume || 0;
+        
+        if (currentClose > previousClose) {
+          obvValue += currentVolume;
+        } else if (currentClose < previousClose) {
+          obvValue -= currentVolume;
+        }
+        // If prices are equal, OBV remains the same
+        
+        result.push({
+          ...data[i],
+          indicator: obvValue
+        });
+      }
+      
+      return result;
+    };
+    
+    const calculateOBVDivergence = (data, { period = 14 }) => {
+      // First calculate OBV
+      const obvResult = calculateOBV(data);
+      const result = [];
+      
+      // We need at least 'period' data points
+      for (let i = 0; i < Math.min(period, data.length); i++) {
+        result.push({ ...data[i], indicator: null });
+      }
+      
+      // Calculate the divergence for the remaining points
+      for (let i = period; i < data.length; i++) {
+        // Calculate price change over period
+        const priceChange = ((data[i].close - data[i - period].close) / data[i - period].close) * 100;
+        
+        // Calculate OBV change over period
+        const obvChange = obvResult[i].indicator - obvResult[i - period].indicator;
+        const obvPercentChange = obvResult[i - period].indicator !== 0 ? 
+          (obvChange / Math.abs(obvResult[i - period].indicator)) * 100 : 0;
+        
+        // Divergence is the difference between OBV percent change and price percent change
+        // Positive value means OBV is stronger than price (potentially bullish)
+        // Negative value means OBV is weaker than price (potentially bearish)
+        const divergence = obvPercentChange - priceChange;
+        
+        result.push({
+          ...data[i],
+          indicator: divergence
+        });
+      }
+      
+      return result;
+    };
+    
+    const calculateATR = (data, { period = 14 }) => {
+      const result = [];
+      const trueRanges = [];
+      
+      // Calculate True Range for each day (except first day)
+      trueRanges.push(0); // First day has no TR (no previous close)
+      result.push({ ...data[0], indicator: null });
+      
+      for (let i = 1; i < data.length; i++) {
+        const high = data[i].high || data[i].close;
+        const low = data[i].low || data[i].close;
+        const prevClose = data[i - 1].close;
+        
+        // True Range is the maximum of:
+        // 1. High - Low
+        // 2. |High - Previous Close|
+        // 3. |Low - Previous Close|
+        const tr1 = high - low;
+        const tr2 = Math.abs(high - prevClose);
+        const tr3 = Math.abs(low - prevClose);
+        
+        const trueRange = Math.max(tr1, tr2, tr3);
+        trueRanges.push(trueRange);
+        
+        // Add null indicator until we have enough data points
+        if (i < period) {
+          result.push({ ...data[i], indicator: null });
+        }
+      }
+      
+      // Calculate first ATR value (simple average of first 'period' true ranges)
+      let sum = 0;
+      for (let i = 1; i <= period; i++) {
+        sum += trueRanges[i];
+      }
+      let atr = sum / period;
+      result[period] = { ...data[period], indicator: atr };
+      
+      // Calculate remaining ATR values using EMA method
+      for (let i = period + 1; i < data.length; i++) {
+        // Wilder's EMA formula: ATR = ((period-1) * previous ATR + current TR) / period
+        atr = ((period - 1) * atr + trueRanges[i]) / period;
+        result.push({ ...data[i], indicator: atr });
+      }
+      
+      return result;
+    };
+    
+    const calculateATRPercentage = (data, { period = 14 }) => {
+      // First calculate ATR
+      const atrResult = calculateATR(data, { period });
+      
+      // Convert ATR to percentage of price
+      return atrResult.map(item => {
+        if (item.indicator === null || item.close === 0) {
+          return { ...item, indicator: null };
+        }
+        
+        // ATR as percentage of closing price
+        return {
+          ...item,
+          indicator: (item.indicator / item.close) * 100
+        };
+      });
+    };
+    
+    const calculateMFI = (data, { period = 14 }) => {
+      const result = [];
+      
+      // Not enough data points
+      if (data.length <= period) {
+        return data.map(item => ({ ...item, indicator: null }));
+      }
+      
+      // Add null values for first 'period' days
+      for (let i = 0; i < period; i++) {
+        result.push({ ...data[i], indicator: null });
+      }
+      
+      // Calculate typical prices and money flows
+      const typicalPrices = data.map(item => {
+        const high = item.high || item.close;
+        const low = item.low || item.close;
+        return (high + low + item.close) / 3;
+      });
+      
+      const moneyFlows = typicalPrices.map((tp, i) => tp * (data[i].volume || 0));
+      
+      // Calculate MFI for each data point from 'period' onwards
+      for (let i = period; i < data.length; i++) {
+        let positiveFlow = 0;
+        let negativeFlow = 0;
+        
+        // Calculate positive and negative money flows
+        for (let j = i - period + 1; j <= i; j++) {
+          if (j > 0) {
+            if (typicalPrices[j] > typicalPrices[j - 1]) {
+              positiveFlow += moneyFlows[j];
+            } else if (typicalPrices[j] < typicalPrices[j - 1]) {
+              negativeFlow += moneyFlows[j];
+            }
+            // Equal typical prices don't contribute to flows
+          }
+        }
+        
+        // Calculate money flow ratio and MFI
+        if (negativeFlow === 0) {
+          // Avoid division by zero - if there's no negative flow, MFI is 100
+          result.push({ ...data[i], indicator: 100 });
+        } else {
+          const moneyFlowRatio = positiveFlow / negativeFlow;
+          const mfi = 100 - (100 / (1 + moneyFlowRatio));
+          result.push({ ...data[i], indicator: mfi });
+        }
+      }
+      
+      return result;
+    };
+    
+    const detectDoubleBottom = (data, { lookbackPeriod = 40, maxBottomVariation = 3.0 }) => {
+      const result = data.map(item => ({ ...item, indicator: 0 })); // Default to 0 (no pattern)
+      
+      if (data.length < lookbackPeriod) {
+        return result;
+      }
+      
+      // Analyze each day as a potential completion of a double bottom
+      for (let i = lookbackPeriod; i < data.length; i++) {
+        // Get section of data to analyze
+        const section = data.slice(i - lookbackPeriod, i + 1);
+        
+        // Find local minimums (potential bottoms)
+        const localMins = [];
+        for (let j = 1; j < section.length - 1; j++) {
+          const currentLow = section[j].low || section[j].close;
+          const prevLow = section[j - 1].low || section[j - 1].close;
+          const nextLow = section[j + 1].low || section[j + 1].close;
+          
+          if (currentLow < prevLow && currentLow < nextLow) {
+            localMins.push({
+              index: j,
+              value: currentLow
+            });
+          }
+        }
+        
+        // Need at least 2 local minimums
+        if (localMins.length < 2) {
+          continue;
+        }
+        
+        // Check pairs of bottoms to see if they form a double bottom
+        let patternFound = false;
+        
+        for (let b = 0; b < localMins.length - 1; b++) {
+          for (let c = b + 1; c < localMins.length; c++) {
+            const bottom1 = localMins[b];
+            const bottom2 = localMins[c];
+            
+            // Ensure bottoms are not too close together (at least 10 bars apart)
+            if (bottom2.index - bottom1.index < 10) {
+              continue;
+            }
+            
+            // Calculate variation between bottoms
+            const variation = Math.abs((bottom2.value - bottom1.value) / bottom1.value) * 100;
+            
+            if (variation <= maxBottomVariation) {
+              // Check that the price between bottoms rose by at least 5%
+              const middleHighs = section.slice(bottom1.index, bottom2.index).map(bar => bar.high || bar.close);
+              const middleHigh = Math.max(...middleHighs);
+              const risePercent = ((middleHigh - bottom1.value) / bottom1.value) * 100;
+              
+              if (risePercent >= 5) {
+                // Check if current price is higher than middle price
+                const currentPrice = section[section.length - 1].close;
+                if (currentPrice > middleHigh) {
+                  patternFound = true;
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (patternFound) {
+            break;
+          }
+        }
+        
+        // Mark pattern presence with 1 (found) or 0 (not found)
+        result[i].indicator = patternFound ? 1 : 0;
+      }
+      
+      return result;
+    };
+    
+    const calculateMeanReversion = (data, { period = 20 }) => {
+      // Calculate SMA
+      const smaResult = calculateSMA(data, period);
+      
+      // Calculate deviation from mean (SMA)
+      return data.map((item, i) => {
+        if (smaResult[i]?.indicator === null || smaResult[i]?.indicator === undefined) {
+          return { ...item, indicator: null };
+        }
+        
+        // Calculate percent deviation from mean
+        const deviation = ((item.close - smaResult[i].indicator) / smaResult[i].indicator) * 100;
+        return { ...item, indicator: deviation };
+      });
+    };
+
     const calculateVolumeChange = (data) => {
       const result = [];
       
@@ -215,8 +527,8 @@ const TechnicalIndicatorChart = ({
       
       // Calculate volume change for remaining points
       for (let i = 1; i < data.length; i++) {
-        const previousVolume = data[i-1].volume;
-        const currentVolume = data[i].volume;
+        const previousVolume = data[i-1].volume || 0;
+        const currentVolume = data[i].volume || 0;
         
         // Handle division by zero
         const percentChange = previousVolume === 0 ? 0 : ((currentVolume - previousVolume) / previousVolume) * 100;
@@ -241,6 +553,53 @@ const TechnicalIndicatorChart = ({
         break;
       case 'macd':
         result = calculateMACD(data, params);
+        break;
+      case 'bollinger_bands':
+        result = calculateBollingerBands(data, params);
+        break;
+      case 'obv':
+        if (params.valueType === 'divergence') {
+          result = calculateOBVDivergence(data, params);
+        } else {
+          result = calculateOBV(data);
+        }
+        break;
+      case 'atr':
+        if (params.percent === true) {
+          result = calculateATRPercentage(data, params);
+        } else {
+          result = calculateATR(data, params);
+        }
+        break;
+      case 'mfi':
+        result = calculateMFI(data, params);
+        break;
+      case 'double_bottom':
+        result = detectDoubleBottom(data, params);
+        break;
+      case 'mean_reversion':
+        result = calculateMeanReversion(data, params);
+        break;
+      case 'percent_change':
+        // Calculate daily percent change
+        result = [];
+        
+        // First point has no previous to compare with
+        result.push({ ...data[0], indicator: 0 });
+        
+        // Calculate percent change for remaining points
+        for (let i = 1; i < data.length; i++) {
+          const previousClose = data[i-1].close;
+          const currentClose = data[i].close;
+          
+          // Handle division by zero
+          const percentChange = previousClose === 0 ? 0 : ((currentClose - previousClose) / previousClose) * 100;
+          
+          result.push({
+            ...data[i],
+            indicator: percentChange
+          });
+        }
         break;
       case 'volume':
         result = calculateVolumeChange(data);
@@ -349,6 +708,14 @@ const TechnicalIndicatorChart = ({
 
   // Get proper y-axis range and labels based on indicator
   const getIndicatorProps = (indicator) => {
+    // These are default threshold values for percent change coloring
+    const defaultPosThreshold = 2; // Default 2% positive threshold
+    const defaultNegThreshold = -2; // Default -2% negative threshold
+    
+    // Get the posThreshold and negThreshold from params if available
+    const posThreshold = params?.posThreshold || defaultPosThreshold; 
+    const negThreshold = params?.negThreshold || defaultNegThreshold;
+    
     switch (indicator) {
       case 'rsi':
         return {
@@ -365,13 +732,111 @@ const TechnicalIndicatorChart = ({
         return {
           domain: ['auto', 'auto'],
           label: 'MACD',
-          labelFormatter: (value) => `${value.toFixed(2)}`
+          labelFormatter: (value) => (value !== null && value !== undefined) ? `${value.toFixed(2)}` : '-'
+        };
+      case 'bollinger_bands':
+        return {
+          domain: ['auto', 'auto'],
+          label: 'Bollinger Bands Width %',
+          labelFormatter: (value) => (value !== null && value !== undefined) ? `${value.toFixed(2)}%` : '-',
+          referenceLinesY: [
+            { y: 5, stroke: '#888', strokeDasharray: '3 3', label: 'Narrow' },
+            { y: 20, stroke: '#4f46e5', strokeDasharray: '3 3', label: 'Wide' }
+          ]
+        };
+      case 'obv':
+        if (params?.valueType === 'divergence') {
+          return {
+            domain: ['auto', 'auto'],
+            label: 'OBV Divergence',
+            labelFormatter: (value) => (value !== null && value !== undefined) ? `${value.toFixed(2)}` : '-',
+            referenceLinesY: [
+              { y: 0, stroke: '#888', strokeWidth: 1 },
+              { y: 10, stroke: 'green', strokeDasharray: '3 3', label: 'Positive Divergence' },
+              { y: -10, stroke: 'red', strokeDasharray: '3 3', label: 'Negative Divergence' }
+            ]
+          };
+        } else {
+          return {
+            domain: ['auto', 'auto'],
+            label: 'On-Balance Volume',
+            labelFormatter: (value) => {
+              if (value === null || value === undefined) return '-';
+              // Format large numbers with K, M, B suffixes
+              if (Math.abs(value) >= 1000000000) {
+                return (value / 1000000000).toFixed(1) + 'B';
+              } else if (Math.abs(value) >= 1000000) {
+                return (value / 1000000).toFixed(1) + 'M';
+              } else if (Math.abs(value) >= 1000) {
+                return (value / 1000).toFixed(1) + 'K';
+              } else {
+                return value.toString();
+              }
+            }
+          };
+        }
+      case 'atr':
+        if (params?.percent === true) {
+          return {
+            domain: [0, 'auto'],
+            label: 'ATR %',
+            labelFormatter: (value) => (value !== null && value !== undefined) ? `${value.toFixed(2)}%` : '-'
+          };
+        } else {
+          return {
+            domain: [0, 'auto'],
+            label: 'ATR',
+            labelFormatter: (value) => (value !== null && value !== undefined) ? `${value.toFixed(2)}` : '-'
+          };
+        }
+      case 'mfi':
+        return {
+          domain: [0, 100],
+          tickCount: 5,
+          label: 'Money Flow Index',
+          labelFormatter: (value) => (value !== null && value !== undefined) ? `${value}` : '-',
+          referenceLinesY: [
+            { y: 80, stroke: 'red', strokeDasharray: '3 3', label: 'Overbought' },
+            { y: 20, stroke: 'green', strokeDasharray: '3 3', label: 'Oversold' }
+          ]
+        };
+      case 'double_bottom':
+        return {
+          domain: [0, 1.1],
+          label: 'Double Bottom Pattern',
+          labelFormatter: (value) => (value !== null && value !== undefined) ? (value === 1 ? 'YES' : 'NO') : '-'
+        };
+      case 'mean_reversion':
+        return {
+          domain: ['auto', 'auto'],
+          label: 'Deviation from Mean (%)',
+          labelFormatter: (value) => (value !== null && value !== undefined) ? `${value.toFixed(2)}%` : '-',
+          referenceLinesY: [
+            { y: 0, stroke: '#888', strokeWidth: 1 },
+            { y: 10, stroke: 'red', strokeDasharray: '3 3', label: 'Overbought' },
+            { y: -10, stroke: 'green', strokeDasharray: '3 3', label: 'Oversold' }
+          ]
+        };
+      case 'percent_change':
+        // Return with both default and provided thresholds
+        return {
+          domain: ['auto', 'auto'],
+          label: 'Daily Percent Change',
+          labelFormatter: (value) => (value !== null && value !== undefined) ? `${value.toFixed(2)}%` : '-',
+          referenceLinesY: [
+            { y: 0, stroke: '#888', strokeWidth: 1 },
+            { y: posThreshold, stroke: 'green', strokeDasharray: '3 3', label: `+${posThreshold}%` },
+            { y: negThreshold, stroke: 'red', strokeDasharray: '3 3', label: `${negThreshold}%` }
+          ],
+          // Store thresholds to use for conditional styling
+          posThreshold,
+          negThreshold
         };
       case 'volume':
         return {
           domain: ['auto', 'auto'],
           label: 'Volume Change %',
-          labelFormatter: (value) => `${value.toFixed(2)}%`,
+          labelFormatter: (value) => (value !== null && value !== undefined) ? `${value.toFixed(2)}%` : '-',
           referenceLinesY: [
             { y: 0, stroke: '#888', strokeWidth: 1 }
           ]
@@ -381,6 +846,7 @@ const TechnicalIndicatorChart = ({
           domain: [0, 'auto'],
           label: 'Volume',
           labelFormatter: (value) => {
+            if (value === null || value === undefined) return '-';
             // Format large numbers with K, M, B suffixes
             if (value >= 1000000000) {
               return (value / 1000000000).toFixed(1) + 'B';
@@ -397,7 +863,7 @@ const TechnicalIndicatorChart = ({
         return {
           domain: ['auto', 'auto'],
           label: 'Value',
-          labelFormatter: (value) => `${value.toFixed(2)}`
+          labelFormatter: (value) => (value !== null && value !== undefined) ? `${value.toFixed(2)}` : '-'
         };
     }
   };
@@ -465,20 +931,124 @@ const TechnicalIndicatorChart = ({
           ))}
 
           {/* Render the appropriate chart based on indicator type */}
-          {/* Render indicator line */}
-          <Line 
-            type="monotone"
-            dataKey="indicator"
-            stroke="#4f46e5"
-            dot={false}
-            yAxisId="left"
-            activeDot={activeDot ? { r: 4, stroke: 'white', strokeWidth: 1 } : false}
-            name={indicatorProps.label}
-            connectNulls={true}
-          />
+          {/* Default case - render simple line chart for most indicators */}
+          {!['percent_change', 'macd', 'bollinger_bands', 'double_bottom', 'obv'].includes(indicator) && (
+            <Line 
+              type="monotone"
+              dataKey="indicator"
+              stroke="#4f46e5"
+              dot={false}
+              yAxisId="left"
+              activeDot={activeDot ? { r: 4, stroke: 'white', strokeWidth: 1 } : false}
+              name={indicatorProps.label}
+              connectNulls={true}
+            />
+          )}
           
+          {/* Special case for Bollinger Bands */}
+          {indicator === 'bollinger_bands' && (
+            <>
+              <Line 
+                type="monotone"
+                dataKey="indicator"
+                stroke="#4f46e5"
+                dot={false}
+                yAxisId="left"
+                activeDot={activeDot ? { r: 4, stroke: 'white', strokeWidth: 1 } : false}
+                name="Width %"
+                connectNulls={true}
+              />
+            </>
+          )}
+          
+          {/* Special case for Double Bottom Pattern */}
+          {indicator === 'double_bottom' && (
+            <Bar 
+              dataKey="indicator"
+              yAxisId="left"
+              name="Pattern Detected"
+              fill="#4f46e5"
+              opacity={0.8}
+            />
+          )}
+          
+          {/* Special case for OBV Divergence */}
+          {indicator === 'obv' && params.valueType === 'divergence' && (
+            <Bar 
+              dataKey="indicator"
+              yAxisId="left"
+              name="OBV Divergence"
+              fill={(data) => {
+                const val = data.indicator;
+                if (val > 0) return "#22c55e"; // Green for positive divergence
+                if (val < 0) return "#ef4444"; // Red for negative divergence
+                return "#6366f1"; // Purple for no divergence
+              }}
+              opacity={0.7}
+            />
+          )}
+          
+          {/* Basic OBV chart */}
+          {indicator === 'obv' && params.valueType !== 'divergence' && (
+            <Line 
+              type="monotone"
+              dataKey="indicator"
+              stroke="#4f46e5"
+              dot={false}
+              yAxisId="left"
+              activeDot={activeDot ? { r: 4, stroke: 'white', strokeWidth: 1 } : false}
+              name="OBV"
+              connectNulls={true}
+            />
+          )}
+          
+          {/* Special rendering for percent change with color changes based on thresholds */}
+          {indicator === 'percent_change' && (
+            <>
+              <Line 
+                type="monotone"
+                dataKey="indicator"
+                dot={false}
+                yAxisId="left"
+                activeDot={activeDot ? { r: 4, stroke: 'white', strokeWidth: 1 } : false}
+                name={indicatorProps.label}
+                connectNulls={true}
+                stroke="#4f46e5" // Default color
+                strokeWidth={2}
+              />
+              <Bar 
+                dataKey="indicator"
+                yAxisId="left" 
+                name="Daily % Change"
+                fill={(data) => {
+                  if (!data || data.indicator === undefined) return "#6366f1";
+                  
+                  // Extract thresholds from indicatorProps with default fallbacks
+                  const posThreshold = indicatorProps.posThreshold || 2;
+                  const negThreshold = indicatorProps.negThreshold || -2;
+                  
+                  if (data.indicator >= posThreshold) return "#22c55e"; // Green for values above positive threshold
+                  if (data.indicator <= negThreshold) return "#ef4444"; // Red for values below negative threshold
+                  return "#6366f1"; // Purple for values in between
+                }}
+                opacity={0.5}
+              />
+            </>
+          )}
+          
+          {/* MACD Chart */}
           {indicator === 'macd' && (
             <>
+              <Line 
+                type="monotone"
+                dataKey="indicator"
+                stroke="#4f46e5"
+                dot={false}
+                yAxisId="left"
+                activeDot={activeDot ? { r: 4, stroke: 'white', strokeWidth: 1 } : false}
+                name="MACD Line"
+                connectNulls={true}
+              />
               <Line 
                 type="monotone"
                 dataKey="signal"
@@ -491,23 +1061,32 @@ const TechnicalIndicatorChart = ({
               />
               <Bar 
                 dataKey="histogram"
-                fill="#10b981"
-                yAxisId="left"
-                opacity={0.6}
+                yAxisId="left" 
                 name="Histogram"
+                fill={(data) => {
+                  if (!data || !data.histogram) return "#10b981";
+                  return data.histogram >= 0 ? "#10b981" : "#ef4444"; // Green for positive, red for negative
+                }}
+                opacity={0.6}
               />
             </>
           )}
           
+          {/* Volume Change */}
           {indicator === 'volume' && (
             <Bar 
               dataKey="indicator"
-              fill="#4f46e5"
-              yAxisId="left"
+              yAxisId="left" 
               name="Volume Change %"
+              fill={(data) => {
+                if (!data || data.indicator === undefined || data.indicator === null) return "#4f46e5";
+                return data.indicator >= 0 ? "#22c55e" : "#ef4444"; // Green for positive, red for negative
+              }}
+              opacity={0.6}
             />
           )}
           
+          {/* Raw Volume */}
           {indicator === 'raw_volume' && (
             <Bar 
               dataKey="indicator"
@@ -887,6 +1466,12 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
     { id: "sma", label: "SMA" },
     { id: "rsi", label: "RSI" },
     { id: "macd", label: "MACD" },
+    { id: "bollinger_bands", label: "Bollinger" },
+    { id: "obv", label: "OBV" },
+    { id: "atr", label: "ATR" },
+    { id: "mfi", label: "MFI" },
+    { id: "double_bottom", label: "Double Bottom" },
+    { id: "percent_change", label: "% Change" },
     { id: "volume", label: "Volume Change" },
     { id: "raw_volume", label: "Raw Volume" }
   ];
@@ -1145,6 +1730,46 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
               </div>
             )}
             
+            {/* Percent Change thresholds */}
+            {selectedIndicator === "percent_change" && (
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center">
+                  <label htmlFor="posThreshold" className="mr-2 text-sm text-gray-600">
+                    <span className="inline-block w-3 h-3 bg-green-500 rounded-full mr-1"></span>
+                    Positive:
+                  </label>
+                  <input
+                    id="posThreshold"
+                    type="number"
+                    min="0.1"
+                    max="10"
+                    step="0.1"
+                    value={indicatorParams.posThreshold || 2}
+                    onChange={(e) => setIndicatorParams({...indicatorParams, posThreshold: parseFloat(e.target.value)})}
+                    className="w-16 px-2 py-1 text-sm border border-gray-300 rounded"
+                  />
+                  <span className="ml-1 text-sm text-gray-600">%</span>
+                </div>
+                <div className="flex items-center">
+                  <label htmlFor="negThreshold" className="mr-2 text-sm text-gray-600">
+                    <span className="inline-block w-3 h-3 bg-red-500 rounded-full mr-1"></span>
+                    Negative:
+                  </label>
+                  <input
+                    id="negThreshold"
+                    type="number"
+                    min="-10"
+                    max="-0.1"
+                    step="0.1"
+                    value={indicatorParams.negThreshold || -2}
+                    onChange={(e) => setIndicatorParams({...indicatorParams, negThreshold: parseFloat(e.target.value)})}
+                    className="w-16 px-2 py-1 text-sm border border-gray-300 rounded"
+                  />
+                  <span className="ml-1 text-sm text-gray-600">%</span>
+                </div>
+              </div>
+            )}
+            
             {/* MACD-specific parameters */}
             {selectedIndicator === "macd" && (
               <>
@@ -1233,6 +1858,143 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
               </div>
             )}
           </>
+        )}
+        
+        {/* Orders Table */}
+        {transactions && transactions.length > 0 && (
+          <div className="mt-6 pt-4 border-t border-gray-200">
+            <h4 className="text-md font-medium text-gray-900 mb-3">Orders for {symbol}</h4>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Position After</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reason</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {transactions.map((tx, index) => {
+                    // Parse condition details to display reason for trade
+                    let reasonText = 'Strategy criteria met';
+                    if (tx.conditionDetails) {
+                      try {
+                        const condition = JSON.parse(tx.conditionDetails);
+                        if (condition.type === 'technical') {
+                          // Technical indicator condition
+                          const indicatorName = condition.indicator.toUpperCase();
+                          const operator = condition.operator.replace(/_/g, ' ');
+                          const value = condition.value;
+                          
+                          if (condition.indicator === 'macd' && condition.params?.valueType === 'crossover') {
+                            reasonText = `MACD ${condition.params.direction} crossover`;
+                          } else {
+                            reasonText = `${indicatorName} ${operator} ${value}`;
+                          }
+                        } else if (condition.type === 'consecutive') {
+                          // Consecutive price movement
+                          reasonText = `${condition.days} consecutive ${condition.direction} days`;
+                        } else if (condition.metric === 'percent_change') {
+                          // Price percent change
+                          const timeframe = condition.timeframe || 'daily';
+                          const operator = condition.operator.replace(/_/g, ' ');
+                          reasonText = `${timeframe} change ${operator} ${condition.value}%`;
+                        } else if (condition.metric === 'price') {
+                          // Price condition
+                          reasonText = `Price ${condition.operator.replace(/_/g, ' ')} $${condition.value}`;
+                        } else if (condition.metric === 'volume') {
+                          // Volume condition
+                          reasonText = `Volume ${condition.operator.replace(/_/g, ' ')} ${condition.value}`;
+                        }
+                      } catch (e) {
+                        console.error('Error parsing condition details:', e);
+                      }
+                    }
+                    
+                    return (
+                      <tr key={index} className={
+                        tx.type === 'buy' || tx.type === 'cover_short' 
+                          ? 'bg-green-50' 
+                          : 'bg-red-50'
+                      }>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{formatDate(tx.date)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className={`px-2 py-1 text-xs rounded-full ${
+                            tx.type === 'buy' || tx.type === 'cover_short' 
+                              ? 'bg-green-100 text-green-800' 
+                              : 'bg-red-100 text-red-800'
+                          }`}>
+                            {tx.type === 'cover_short' ? 'COVER' : tx.type.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{formatCurrency(tx.price)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{tx.quantity.toFixed(4)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{formatCurrency(tx.amount)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{tx.positionAfter.toFixed(4)}</td>
+                        <td className="px-3 py-2 text-sm text-gray-500">{reasonText}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            
+            {/* Key Metrics */}
+            <div className="mt-4 bg-gray-50 p-3 rounded-md">
+              <h5 className="text-sm font-medium text-gray-700 mb-2">Key Metrics</h5>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                {/* Total Trades */}
+                <div className="bg-white p-2 rounded border border-gray-200">
+                  <div className="text-xs text-gray-500">Total Trades</div>
+                  <div className="text-lg font-semibold">{transactions.length}</div>
+                </div>
+                
+                {/* Buy/Sell Ratio */}
+                <div className="bg-white p-2 rounded border border-gray-200">
+                  <div className="text-xs text-gray-500">Buy/Sell Ratio</div>
+                  <div className="text-lg font-semibold">
+                    {(() => {
+                      const buys = transactions.filter(tx => tx.type === 'buy' || tx.type === 'cover_short').length;
+                      const sells = transactions.filter(tx => tx.type === 'sell' || tx.type === 'short').length;
+                      return `${buys}:${sells}`;
+                    })()}
+                  </div>
+                </div>
+                
+                {/* Avg Buy Price */}
+                <div className="bg-white p-2 rounded border border-gray-200">
+                  <div className="text-xs text-gray-500">Avg Buy Price</div>
+                  <div className="text-lg font-semibold">
+                    {formatCurrency(
+                      (() => {
+                        const buyTx = transactions.filter(tx => tx.type === 'buy' || tx.type === 'cover_short');
+                        if (buyTx.length === 0) return 0;
+                        return buyTx.reduce((sum, tx) => sum + tx.price, 0) / buyTx.length;
+                      })()
+                    )}
+                  </div>
+                </div>
+                
+                {/* Avg Sell Price */}
+                <div className="bg-white p-2 rounded border border-gray-200">
+                  <div className="text-xs text-gray-500">Avg Sell Price</div>
+                  <div className="text-lg font-semibold">
+                    {formatCurrency(
+                      (() => {
+                        const sellTx = transactions.filter(tx => tx.type === 'sell' || tx.type === 'short');
+                        if (sellTx.length === 0) return 0;
+                        return sellTx.reduce((sum, tx) => sum + tx.price, 0) / sellTx.length;
+                      })()
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

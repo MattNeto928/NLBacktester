@@ -20,7 +20,7 @@ app.use(express.json());
 
 // Routes
 app.get('/', (req, res) => {
-  res.send('NLTradeTest API is running');
+  res.send('NLBacktest API is running');
 });
 
 // API Routes

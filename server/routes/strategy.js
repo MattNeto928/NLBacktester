@@ -40,7 +40,8 @@ router.post('/parse', async (req, res) => {
              - direction: "up", "down", or "unchanged"
           c. Pattern condition:
              - type: "pattern"
-             - pattern: description of pattern like "double_top", "head_and_shoulders", etc.
+             - pattern: description of pattern like "double_top", "head_and_shoulders", "day_trade_gap_down", "day_trade_gap_up", "day_trade_gap_any", etc.
+             - threshold: minimum percentage for gap patterns (optional)
           d. Technical indicator condition:
              - type: "technical"
              - indicator: One of "rsi", "macd", "ma_relative", "bbands", "volume_change", "obv", "atr", "mfi"
@@ -58,6 +59,14 @@ router.post('/parse', async (req, res) => {
        - amount: Object with:
              - type: "fixed_amount" (in dollars), "percentage" (of portfolio), "shares" (fixed number of shares)
              - value: numeric value (dollars, percentage, or number of shares)
+             
+    SPECIAL DAY TRADING PATTERNS:
+    - For strategies involving buying at market open and selling at market close on the same day, use:
+      - pattern: "day_trade_gap_down" (for strategies buying when stocks gap down at open)
+      - pattern: "day_trade_gap_up" (for strategies buying when stocks gap up at open)
+      - pattern: "day_trade_gap_any" (for strategies buying on any significant gap at open)
+      - threshold: The minimum gap percentage required to trigger a trade
+    - The system will automatically close day trading positions at the end of the trading day
     
     2. Universe: Object with:
        - categories: Array of stock categories (e.g., "blue_chip", "penny_stock", "tech", "financial")
@@ -252,7 +261,43 @@ router.post('/parse', async (req, res) => {
          "timeRange": {"start": 2020, "end": 2023}
        }
        
-    9. "Buy when price is 5% below its 20-day moving average" should produce:
+    9. "Buy $200 if a stock gaps down more than 3% at market open and sell at market close the same day" should produce:
+       {
+         "actions": [
+           {
+             "type": "buy",
+             "condition": {
+               "type": "pattern",
+               "pattern": "day_trade_gap_down",
+               "threshold": 3.0
+             },
+             "timeframe": "daily",
+             "amount": {"type": "fixed_amount", "value": 200}
+           }
+         ],
+         "universe": {"categories": ["volatile"], "count": 10},
+         "timeRange": {"start": 2022, "end": 2023}
+       }
+       
+    10. "Day trade by buying $500 when a stock gaps up by 2% at the open and exit at close" should produce:
+       {
+         "actions": [
+           {
+             "type": "buy",
+             "condition": {
+               "type": "pattern",
+               "pattern": "day_trade_gap_up",
+               "threshold": 2.0
+             },
+             "timeframe": "daily",
+             "amount": {"type": "fixed_amount", "value": 500}
+           }
+         ],
+         "universe": {"categories": ["tech", "volatile"], "count": 10},
+         "timeRange": {"start": 2022, "end": 2023}
+       }
+       
+    11. "Buy when price is 5% below its 20-day moving average" should produce:
        {
          "actions": [
            {
@@ -328,6 +373,7 @@ router.post('/parse', async (req, res) => {
       return res.status(200).json({ strategy: parsedStrategy });
     }
     
+    
     const result = await model.generateContent(prompt);
     const response = result.response;
     const text = response.text();
@@ -391,6 +437,175 @@ router.post('/parse', async (req, res) => {
               console.log('[GEMINI] Fixed action:', JSON.stringify(parsedStrategy.actions[i]));
               break;
             }
+          }
+        }
+      }
+      
+      // Always check and force the correct pattern for day trading with gaps
+      const hasGapTerms = description.toLowerCase().includes('gap') || 
+                         description.toLowerCase().includes('gaps');
+      const hasOpenTerms = description.toLowerCase().includes('open') || 
+                          description.toLowerCase().includes('market open');
+      const hasCloseTerms = description.toLowerCase().includes('close') || 
+                           description.toLowerCase().includes('market close');
+      const hasSameDayTerms = description.toLowerCase().includes('same day') || 
+                             description.toLowerCase().includes('day trading') ||
+                             description.toLowerCase().includes('day trade');
+                             
+      // This is a stronger check that forces conversion for gap-based day trading strategies
+      const isGapDayTrading = hasGapTerms && hasOpenTerms && 
+                             (hasCloseTerms || hasSameDayTerms);
+      
+      if (isGapDayTrading) {
+        console.log('[GEMINI] Detected gap-based day trading strategy');
+        
+        // If no action has the right pattern type, convert the first buy action to use day_trade pattern
+        const hasDayTradePattern = parsedStrategy.actions.some(action => 
+          action.condition?.type === 'pattern' && 
+          action.condition?.pattern?.startsWith('day_trade_gap')
+        );
+        
+        if (!hasDayTradePattern) {
+          console.log('[GEMINI] Converting action to day trade pattern');
+          
+          // Find direction and threshold
+          const isGapDown = description.toLowerCase().includes('gap down') || 
+                           description.toLowerCase().includes('gaps down') ||
+                           description.toLowerCase().includes('gap.*down') ||
+                           description.toLowerCase().includes('down more than');
+          const isGapUp = description.toLowerCase().includes('gap up') || 
+                         description.toLowerCase().includes('gaps up') ||
+                         description.toLowerCase().includes('gap.*up') ||
+                         description.toLowerCase().includes('up more than');
+          
+          // Extract threshold from description or from condition if already parsed
+          let threshold = 3.0; // Default
+          
+          // First try to extract from description
+          const percentMatch = description.match(/(\d+(?:\.\d+)?)%/);
+          if (percentMatch) {
+            threshold = parseFloat(percentMatch[1]);
+          }
+          
+          // If not found, look in existing conditions
+          if (!percentMatch) {
+            // Find any percent_change condition with less_than operator (for gap down)
+            const gapDownCondition = parsedStrategy.actions.find(action => 
+              action.condition?.metric === 'percent_change' && 
+              action.condition?.operator === 'less_than' &&
+              action.condition?.value < 0
+            );
+            
+            if (gapDownCondition && isGapDown) {
+              threshold = Math.abs(gapDownCondition.condition.value);
+              console.log(`[GEMINI] Extracted threshold ${threshold}% from existing condition`);
+            }
+            
+            // Find any percent_change condition with greater_than operator (for gap up)
+            const gapUpCondition = parsedStrategy.actions.find(action => 
+              action.condition?.metric === 'percent_change' && 
+              action.condition?.operator === 'greater_than' &&
+              action.condition?.value > 0
+            );
+            
+            if (gapUpCondition && isGapUp) {
+              threshold = gapUpCondition.condition.value;
+              console.log(`[GEMINI] Extracted threshold ${threshold}% from existing condition`);
+            }
+          }
+          
+          // Find or create buy action to convert
+          let buyActionIndex = parsedStrategy.actions.findIndex(action => action.type === 'buy');
+          
+          // If no buy action exists, create one with the first action's amount or default
+          if (buyActionIndex < 0) {
+            console.log('[GEMINI] No buy action found, creating one');
+            const defaultAmount = parsedStrategy.actions.length > 0 ? 
+                                 parsedStrategy.actions[0].amount : 
+                                 {type: 'fixed_amount', value: 200};
+            
+            parsedStrategy.actions.push({
+              type: 'buy',
+              timeframe: 'daily',
+              amount: defaultAmount,
+              condition: {} // Will be set below
+            });
+            
+            buyActionIndex = parsedStrategy.actions.length - 1;
+          }
+          
+          if (buyActionIndex >= 0) {
+            // Convert to day trading pattern
+            parsedStrategy.actions[buyActionIndex].condition = {
+              type: 'pattern',
+              pattern: isGapDown ? 'day_trade_gap_down' : 
+                      isGapUp ? 'day_trade_gap_up' : 'day_trade_gap_any',
+              threshold: threshold
+            };
+            parsedStrategy.actions[buyActionIndex].timeframe = 'daily';
+            
+            // Remove any explicit sell actions as the system will handle it automatically
+            parsedStrategy.actions = parsedStrategy.actions.filter(action => 
+              !(action.type === 'sell' && action.condition?.metric === 'percent_change')
+            );
+            
+            // Set universe to volatile stocks for better day trading results
+            if (!parsedStrategy.universe) {
+              parsedStrategy.universe = { categories: ['volatile'], count: 10 };
+            } else {
+              if (!parsedStrategy.universe.categories || !Array.isArray(parsedStrategy.universe.categories)) {
+                parsedStrategy.universe.categories = ['volatile'];
+              } else if (!parsedStrategy.universe.categories.includes('volatile')) {
+                parsedStrategy.universe.categories.push('volatile');
+              }
+              
+              if (!parsedStrategy.universe.count) {
+                parsedStrategy.universe.count = 10;
+              }
+            }
+            
+            // Extract time range from description 
+            const yearRange = description.match(/(\d{4})(?:\s*-\s*|\s+to\s+)(\d{4})/);
+            const singleYear = description.match(/(?:in|during|from)\s+(\d{4})/);
+            const fromYearRange = description.match(/from\s+(\d{4})(?:\s*-\s*|\s+to\s+)(\d{4})/);
+            
+            // Specific pattern for "2022-2023" style format
+            const simpleYearRange = description.match(/\b(20\d{2})[\s-]+?(20\d{2})\b/);
+            
+            // Set appropriate timeRange for day trading (default to 2022-2023 if not specified)
+            if (!parsedStrategy.timeRange) {
+              parsedStrategy.timeRange = { start: 2022, end: 2023 };
+            } 
+            
+            // Update timeRange if we find year patterns in the description
+            if (fromYearRange) {
+              parsedStrategy.timeRange.start = parseInt(fromYearRange[1]);
+              parsedStrategy.timeRange.end = parseInt(fromYearRange[2]);
+              console.log(`[GEMINI] Detected year range from description: ${parsedStrategy.timeRange.start}-${parsedStrategy.timeRange.end}`);
+            } else if (yearRange) {
+              parsedStrategy.timeRange.start = parseInt(yearRange[1]);
+              parsedStrategy.timeRange.end = parseInt(yearRange[2]);
+              console.log(`[GEMINI] Detected year range from description: ${parsedStrategy.timeRange.start}-${parsedStrategy.timeRange.end}`);
+            } else if (simpleYearRange) {
+              parsedStrategy.timeRange.start = parseInt(simpleYearRange[1]);
+              parsedStrategy.timeRange.end = parseInt(simpleYearRange[2]);
+              console.log(`[GEMINI] Detected simple year range from description: ${parsedStrategy.timeRange.start}-${parsedStrategy.timeRange.end}`);
+            } else if (singleYear) {
+              const year = parseInt(singleYear[1]);
+              parsedStrategy.timeRange.start = year;
+              parsedStrategy.timeRange.end = year;
+              console.log(`[GEMINI] Detected single year from description: ${year}`);
+            } else if (description.includes("2022-2023") || description.includes("2022 to 2023")) {
+              // Hardcoded fallback for the specific requested date range
+              parsedStrategy.timeRange.start = 2022;
+              parsedStrategy.timeRange.end = 2023;
+              console.log(`[GEMINI] Using explicitly mentioned year range: 2022-2023`);
+            }
+            
+            console.log('[GEMINI] Modified strategy for day trading:', 
+                        JSON.stringify(parsedStrategy.actions[buyActionIndex]));
+            console.log('[GEMINI] Universe:', JSON.stringify(parsedStrategy.universe));
+            console.log('[GEMINI] TimeRange:', JSON.stringify(parsedStrategy.timeRange));
           }
         }
       }

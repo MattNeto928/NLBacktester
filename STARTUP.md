@@ -1,6 +1,6 @@
-# NLTradeTest Startup Guide
+# NLBacktest Startup Guide
 
-Follow these steps to run the NLTradeTest application:
+Follow these steps to run the NLBacktest application:
 
 ## Prerequisites
 
