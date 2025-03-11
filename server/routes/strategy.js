@@ -335,8 +335,8 @@ router.post('/parse', async (req, res) => {
              "condition": {
                "type": "technical",
                "indicator": "ma_relative",
-               "operator": "crosses_above",
-               "value": 0,
+               "operator": "equal",
+               "value": 1,
                "params": {
                  "period": 20,
                  "valueType": "crossover",
@@ -351,8 +351,8 @@ router.post('/parse', async (req, res) => {
              "condition": {
                "type": "technical",
                "indicator": "ma_relative",
-               "operator": "crosses_below",
-               "value": 0,
+               "operator": "equal",
+               "value": 1,
                "params": {
                  "period": 20,
                  "valueType": "crossover",
