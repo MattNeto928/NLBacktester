@@ -1434,23 +1434,35 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
       }
       
       if (point) {
+        // For day trading, we need to distinguish open vs close prices
+        let priceToUse = point.close;
+        const isDayTrading = tx.conditionDetails && tx.conditionDetails.includes('day_trade_gap');
+        
+        // For day trading buy transactions, use the open price
+        if (isDayTrading && tx.type === 'buy') {
+          priceToUse = point.open || point.close;
+          console.log(`${symbol}: Using open price ${priceToUse} for day trading buy`);
+        }
+        
         // Process based on transaction type - handle all supported transaction types
         if (tx.type === 'buy' || tx.type === 'cover_short') {
           buyTransactions.push({
             date: matchDate,
-            close: point.close,
+            close: priceToUse,
             amount: tx.amount,
-            type: tx.type
+            type: tx.type,
+            isDayTrading: isDayTrading
           });
-          console.log(`${symbol}: Added buy marker at ${matchDate} at price ${point.close}`);
+          console.log(`${symbol}: Added buy marker at ${matchDate} at price ${priceToUse}`);
         } else if (tx.type === 'sell' || tx.type === 'short') {
           sellTransactions.push({
             date: matchDate,
-            close: point.close,
+            close: priceToUse,
             amount: tx.amount,
-            type: tx.type
+            type: tx.type,
+            isDayTrading: isDayTrading
           });
-          console.log(`${symbol}: Added sell marker at ${matchDate} at price ${point.close}`);
+          console.log(`${symbol}: Added sell marker at ${matchDate} at price ${priceToUse}`);
         }
       } else {
         console.error(`${symbol}: Failed to find data point for transaction on ${txDate}`);
@@ -1652,10 +1664,11 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
                 x={tx.date}
                 y={tx.close}
                 yAxisId="left"
-                r={4}
+                r={tx.isDayTrading ? 6 : 4} // Larger radius for day trading
                 fill="green"
-                stroke="white"
-                strokeWidth={1}
+                stroke={tx.isDayTrading ? "black" : "white"} // More visible border for day trading
+                strokeWidth={tx.isDayTrading ? 2 : 1} // Thicker stroke for day trading
+                strokeOpacity={tx.isDayTrading ? 0.8 : 0.5}
               />
             ))}
             
@@ -1666,10 +1679,11 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
                 x={tx.date}
                 y={tx.close}
                 yAxisId="left"
-                r={4}
+                r={tx.isDayTrading ? 6 : 4} // Larger radius for day trading
                 fill="red"
-                stroke="white"
-                strokeWidth={1}
+                stroke={tx.isDayTrading ? "black" : "white"} // More visible border for day trading
+                strokeWidth={tx.isDayTrading ? 2 : 1} // Thicker stroke for day trading
+                strokeOpacity={tx.isDayTrading ? 0.8 : 0.5}
               />
             ))}
           </ComposedChart>
@@ -1940,8 +1954,8 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
                     return (
                       <tr key={index} className={
                         tx.type === 'buy' || tx.type === 'cover_short' 
-                          ? 'bg-green-50' 
-                          : 'bg-red-50'
+                          ? tx.isDayTrading ? 'bg-green-100' : 'bg-green-50' 
+                          : tx.isDayTrading ? 'bg-red-100' : 'bg-red-50'
                       }>
                         <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{formatDate(tx.date)}</td>
                         <td className="px-3 py-2 whitespace-nowrap">
@@ -1950,10 +1964,15 @@ const StockChart = ({ symbol, stockData, transactions, errorFallback }) => {
                               ? 'bg-green-100 text-green-800' 
                               : 'bg-red-100 text-red-800'
                           }`}>
-                            {tx.type === 'cover_short' ? 'COVER' : tx.type.toUpperCase()}
+                            {tx.isDayTrading && tx.type === 'buy' ? 'BUY@OPEN' : 
+                             tx.isDayTrading && tx.isEodExit ? 'SELL@CLOSE' :
+                             tx.type === 'cover_short' ? 'COVER' : tx.type.toUpperCase()}
                           </span>
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{formatCurrency(tx.price)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {formatCurrency(tx.price)}
+                          {tx.isDayTrading && (tx.type === 'buy' ? ' (open)' : tx.isEodExit ? ' (close)' : '')}
+                        </td>
                         <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{tx.quantity.toFixed(4)}</td>
                         <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{formatCurrency(tx.amount)}</td>
                         <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{tx.positionAfter.toFixed(4)}</td>
@@ -2314,12 +2333,14 @@ const ResultsDashboard = ({ results }) => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                         transaction.type === 'buy' || transaction.type === 'cover_short' 
-                          ? 'bg-green-100 text-green-800' 
+                          ? transaction.isDayTrading ? 'bg-green-200 text-green-800' : 'bg-green-100 text-green-800' 
                           : transaction.type === 'sell' || transaction.type === 'short'
-                            ? 'bg-red-100 text-red-800'
+                            ? transaction.isDayTrading ? 'bg-red-200 text-red-800' : 'bg-red-100 text-red-800'
                             : 'bg-gray-100 text-gray-800'
                       }`}>
-                        {transaction.type === 'cover_short' ? 'COVER' : transaction.type.toUpperCase()}
+                        {transaction.isDayTrading && transaction.type === 'buy' ? 'BUY@OPEN' : 
+                         transaction.isDayTrading && transaction.isEodExit ? 'SELL@CLOSE' :
+                         transaction.type === 'cover_short' ? 'COVER' : transaction.type.toUpperCase()}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

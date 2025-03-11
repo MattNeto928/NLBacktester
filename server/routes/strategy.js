@@ -53,13 +53,14 @@ router.post('/parse', async (req, res) => {
              - threshold: minimum percentage for gap patterns (optional)
           d. Technical indicator condition:
              - type: "technical"
-             - indicator: One of "rsi", "macd", "ma_relative", "bbands", "volume_change", "obv", "atr", "mfi"
-             - operator: "greater_than", "less_than", "equal", etc.
+             - indicator: One of "rsi", "macd", "ma_relative", "ma_crossover", "bbands", "volume_change", "obv", "atr", "mfi"
+             - operator: "greater_than", "less_than", "equal", "crosses_above", "crosses_below"
              - value: threshold value to compare against
              - params: Object with indicator-specific parameters:
                 * For RSI: { period: 14 }
                 * For MACD: { fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, valueType: "line"|"signal"|"histogram"|"crossover", direction: "bullish"|"bearish" }
-                * For MA Relative: { period: 20 }
+                * For MA Relative: { period: 20, valueType: "value"|"crossover", direction: "bullish"|"bearish" }
+                * For MA Crossover: { fastPeriod: 20, slowPeriod: 50, direction: "bullish"|"bearish" }
                 * For Bollinger Bands: { period: 20, multiplier: 2, valueType: "upper"|"lower"|"width"|"percent_b" }
                 * For OBV: { slope: true|false }
                 * For ATR: { period: 14, percent: true|false }
@@ -320,6 +321,86 @@ router.post('/parse', async (req, res) => {
              },
              "timeframe": "daily",
              "amount": {"type": "fixed_amount", "value": 100}
+           }
+         ],
+         "universe": {"categories": ["blue_chip"], "count": 10},
+         "timeRange": {"start": 2020, "end": 2023}
+       }
+       
+    12. "When a stock price crosses above its 20-day moving average, buy $100. Sell when it crosses below." should produce:
+       {
+         "actions": [
+           {
+             "type": "buy",
+             "condition": {
+               "type": "technical",
+               "indicator": "ma_relative",
+               "operator": "crosses_above",
+               "value": 0,
+               "params": {
+                 "period": 20,
+                 "valueType": "crossover",
+                 "direction": "bullish"
+               }
+             },
+             "timeframe": "daily",
+             "amount": {"type": "fixed_amount", "value": 100}
+           },
+           {
+             "type": "sell",
+             "condition": {
+               "type": "technical",
+               "indicator": "ma_relative",
+               "operator": "crosses_below",
+               "value": 0,
+               "params": {
+                 "period": 20,
+                 "valueType": "crossover",
+                 "direction": "bearish"
+               }
+             },
+             "timeframe": "daily",
+             "amount": {"type": "percentage", "value": 100}
+           }
+         ],
+         "universe": {"categories": ["blue_chip"], "count": 10},
+         "timeRange": {"start": 2020, "end": 2023}
+       }
+       
+    13. "Buy when the 10-day moving average crosses above the 30-day moving average. Sell when it crosses below." should produce:
+       {
+         "actions": [
+           {
+             "type": "buy",
+             "condition": {
+               "type": "technical",
+               "indicator": "ma_crossover",
+               "operator": "equal",
+               "value": 1,
+               "params": {
+                 "fastPeriod": 10,
+                 "slowPeriod": 30,
+                 "direction": "bullish"
+               }
+             },
+             "timeframe": "daily",
+             "amount": {"type": "fixed_amount", "value": 100}
+           },
+           {
+             "type": "sell",
+             "condition": {
+               "type": "technical",
+               "indicator": "ma_crossover",
+               "operator": "equal",
+               "value": 1,
+               "params": {
+                 "fastPeriod": 10,
+                 "slowPeriod": 30,
+                 "direction": "bearish"
+               }
+             },
+             "timeframe": "daily",
+             "amount": {"type": "percentage", "value": 100}
            }
          ],
          "universe": {"categories": ["blue_chip"], "count": 10},
@@ -903,9 +984,25 @@ console.log('[BACKTEST] Strategy:', JSON.stringify(strategy, null, 2));
               fields: ['date', 'open', 'high', 'low', 'close', 'volume'] // Explicitly request volume
             });
             
-            // Verify we're getting volume data
+            // More detailed verification of data including open vs close prices
             if (data && data.length > 0) {
+              // Log the first few data points in full detail
               console.log(`[BACKTEST] First data point for ${symbol}:`, JSON.stringify(data[0]));
+              console.log(`[BACKTEST] Second data point for ${symbol}:`, JSON.stringify(data[1]));
+              console.log(`[BACKTEST] Third data point for ${symbol}:`, JSON.stringify(data[2]));
+              
+              // Check for open/close price differences
+              const sampleSize = Math.min(10, data.length);
+              const diffCount = data.slice(0, sampleSize).filter(d => d.open !== d.close).length;
+              console.log(`[BACKTEST] ${symbol}: ${diffCount} out of ${sampleSize} sample points have open != close`);
+              
+              // Check for all identical open/close which could indicate data issue
+              const allSame = data.every(d => d.open === d.close);
+              if (allSame) {
+                console.warn(`[BACKTEST] WARNING: ${symbol} has identical open and close prices for ALL data points!`);
+              }
+              
+              // Check for volume data
               if (data[0].volume === undefined || data[0].volume === null) {
                 console.warn(`[BACKTEST] Warning: No volume data found for ${symbol}`);
               } else {
